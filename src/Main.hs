@@ -30,39 +30,60 @@ data GameState = GameState Obj [Obj]
 
 fps, height, weight :: Int
 fps = 60
-maxX = 150
-maxY = 150
+maxX = 400
+maxY = 300
+weight = 1024
 height = 800
-weight = 600
+blockWeight = 50
+blockHeight = 20
 
-ballRadius, precision :: Float
+ballRadius :: Float
 ballRadius = 10
-precision = 0.001
+blockDist = 1
 
 makeWindow :: Float -> Float -> Point -> Obj
-makeWindow x y (px, py) = (Window box, ((0, 0), (0, 0)))
-    where box = (((0 + px, 0 + py), (x, 0)), ((x + px, 0 + py), (0, y)), ((x + px, y + py), (-x, 0)), ((0 + px, y + py), (0, -y)))
+makeWindow x y (px, py) = (Window box, ((px, py), (0, 0)))
+    where box = (((0 + px, 0 + py), (x, 0)), 
+            ((x + px, 0 + py), (0, y)), 
+            ((x + px, y + py), (-x, 0)), 
+            ((0 + px, y + py), (0, -y)))
+
+makeBlock :: Float -> Float -> Point -> Obj
+makeBlock x y (px, py) = (Block box, ((px, py), (0, 0)))
+    where box = (((0 + px, 0 + py), (x, 0)), 
+            ((x + px, 0 + py), (0, y)), 
+            ((x + px, y + py), (-x, 0)), 
+            ((0 + px, y + py), (0, -y)))
+
+makeLevel :: Int -> [Obj]
+makeLevel 1 = [makeBlock blockWeight blockHeight (-300 + x * (blockWeight + blockDist), 0) | x <- [0..10]]
 
 draw :: GameState -> Picture
 draw (GameState ball others)  =
     pictures (map drawObj (ball : others))
+
 
 drawObj :: Obj -> Picture
 drawObj (shape, ((x, y), _)) = translate x y $ drawShape shape
 
 drawShape :: Shape -> Picture
 drawShape Ball = color blue ball
-drawShape (Window _) = Blank
+drawShape (Window _) = 
+    color red window
+drawShape (Block _) = color green block
 
-ball :: Picture
+ball, block, window :: Picture
 ball = circleSolid ballRadius
+block = polygon [(0, 0), (blockWeight, 0), (blockWeight, blockHeight), (0, blockHeight)]
+window = line [(0, 0), (maxX * 2, 0), (maxX * 2, maxY * 2), (0, maxY * 2), (0, 0)]
+
 
 
 initialBall :: IO Circle
 initialBall = do
-    --x <- randomRIO (- maxX, maxY)
+    x <- randomRIO (- maxX, 0)
     --y <- randomRIO (- maxY, maxY)
-    return ((-200, 0), (100, 100))
+    return ((x, -maxY + 10), (200, 200))
 
 
 update :: Float -> GameState -> GameState
@@ -83,7 +104,6 @@ updateBall dt ((x, y), (vx, vy)) obj
         dx = vx * dt
         dy = vy * dt
 
-
 --intersectCorner :: Float -> Ball -> Obj -> Bool
 --intersectCorner dt ((x, y), (vx, vy)) (Block )
 
@@ -97,26 +117,41 @@ intersectType dt ball (Window (s1, s2, s3, s4), (pos, _))
 
 intersectsSegment :: Float -> Circle -> Segment -> Bool
 intersectsSegment dt ((x, y), (vx, vy)) ((a, b), (c, d)) =
-    not (px > c || py > d) && --case when the point is outside the segment, will catch that with corner
-    magV (x + vx - (a + px), y + vy - (b + py)) <= ballRadius
-    where (px, py) = projectVector (x + vx - a, y + vy - b) (c, d)
-    --where (px, py) = projectVector (x + vx - a, y + vy - b) (a + c, b + d)
+    not ( magV (px, py) > magV (c, d) || not (sameQuad (px, py) (c, d))) && --case when the point is outside the segment, will catch that with corner
+    magV (x + dx - (a + px), y + dy - (b + py)) <= ballRadius
+    where 
+        (px, py) = projectVector (x + dx - a, y + dy - b) (c, d)
+        dx = vx * dt
+        dy = vy * dt
 
 -- project a into b
 projectVector :: Vector -> Vector -> Vector
 projectVector a b = mulSV scalar (normalizeV b)
     where scalar = dotV a (mulSV (1 / magV b) b)
-            
+
+-- checks if a and b are in same quad, axis count for either quad
+sameQuad :: Vector -> Vector -> Bool
+sameQuad (a, b) (c, d) = sameSignal a c && sameSignal b d
+
+-- checks if two floats have the same signal
+sameSignal :: Float -> Float -> Bool
+sameSignal 0 b = True
+sameSignal a 0 = True
+sameSignal a b = a / abs a == b / abs b
+
 
 initialState :: IO GameState
 initialState = do
     ballCoords <- initialBall
-    return (GameState (Ball, ballCoords) [makeWindow (fromIntegral 100) (fromIntegral 100) (0, 0)])--(myZip (windowR maxX maxY)))
+    return (GameState (Ball, ballCoords) (win:level))
+    where
+        win = makeWindow (fromIntegral 800) (fromIntegral 600) (-maxX, -maxY)
+        level = makeLevel 1
 
-window :: Display
-window = InWindow "breakout" (height, weight) (0, 0)
+gameWindow :: Display
+gameWindow = InWindow "breakout" (weight, height) (0, 0)
 
 main :: IO ()
 main = do
     initial <- initialState
-    simulate window black fps initial draw (\_ -> update)
+    simulate gameWindow black fps initial draw (\_ -> update)
