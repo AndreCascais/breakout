@@ -20,7 +20,7 @@ data Shape = Window Box
     deriving (Show)
 
 data IntersectionType = Corner
-    | Horizintal
+    | Horizontal
     | Vertical
     | Null
     deriving (Eq, Show)
@@ -88,21 +88,37 @@ initialBall = do
 
 update :: Float -> GameState -> GameState
 update dt (GameState b segList) = GameState b' segList
-    where b' = updateObj dt b segList
+    where b' = moveObj dt (updateObj dt b segList)
+
+moveObj :: Float -> Obj -> Obj
+moveObj dt (shape, coords) = (shape, moveCoords dt coords)
+
+moveCoords :: Float -> Coords -> Coords
+moveCoords dt ((x, y), (vx, vy)) = ((x + vx * dt, y + vy * dt), (vx, vy))
 
 updateObj :: Float -> Obj -> [Obj] -> Obj
-updateObj dt (Ball, coords) segList = (Ball, updateBall dt coords (head segList))
+updateObj dt (Ball, coords) segList = (Ball, updateBall dt coords intersections)
+    where 
+        intersections = map (intersectType dt coords) segList
 
 
-updateBall :: Float -> Circle -> Obj -> Circle 
-updateBall dt ((x, y), (vx, vy)) obj
-    | intType == Horizintal = ((x - dx, y + dy), (-vx, vy))
-    | intType == Vertical = ((x + dx, y - dy), (vx, -vy))
-    | otherwise = ((x + dx, y + dy), (vx, vy))
+--newBall :: Float -> Circle -> [Circle] -> Circle
+--newBall dt ((x, y), (vx, ))
+
+updateBall :: Float -> Circle -> [IntersectionType] -> Circle 
+updateBall _ c [] = c
+updateBall dt (p, (vx, vy)) (intType:xs) = updateBall dt newCoords xs
+   -- | intType == Horizontal = updateBall dt ((x - dx, y + dy), (-vx, vy))
+   -- | intType == Vertical = ((x + dx, y - dy), (vx, -vy))
+   -- | otherwise = ((x + dx, y + dy), (vx, vy))
     where
-        intType = intersectType dt ((x, y), (vx, vy)) obj
-        dx = vx * dt
-        dy = vy * dt
+       -- intType = intersectType dt ((x, y), (vx, vy)) 
+        newCoords
+            | intType == Horizontal = (p, (-vx, vy))
+            | intType == Vertical = (p, (vx, -vy))
+            | otherwise = (p, (vx, vy))
+        --dx = vx * dt
+        --dy = vy * dt
 
 --intersectCorner :: Float -> Ball -> Obj -> Bool
 --intersectCorner dt ((x, y), (vx, vy)) (Block )
@@ -110,9 +126,15 @@ updateBall dt ((x, y), (vx, vy)) obj
 intersectType :: Float -> Circle -> Obj -> IntersectionType
 intersectType dt ball (Window (s1, s2, s3, s4), (pos, _))
         | intersectsSegment dt ball s1 = Vertical
-        | intersectsSegment dt ball s2 = Horizintal
+        | intersectsSegment dt ball s2 = Horizontal
         | intersectsSegment dt ball s3 = Vertical
-        | intersectsSegment dt ball s4 = Horizintal
+        | intersectsSegment dt ball s4 = Horizontal
+        | otherwise = Null
+intersectType dt ball (Block (s1, s2, s3, s4), (pos, _))
+        | intersectsSegment dt ball s1 = Vertical
+        | intersectsSegment dt ball s2 = Horizontal
+        | intersectsSegment dt ball s3 = Vertical
+        | intersectsSegment dt ball s4 = Horizontal
         | otherwise = Null
 
 intersectsSegment :: Float -> Circle -> Segment -> Bool
