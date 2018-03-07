@@ -1,5 +1,6 @@
 module Main where
 
+import Data.Maybe
 import System.Random
 import Graphics.Gloss
 import Graphics.Gloss.Data.Vector
@@ -7,6 +8,7 @@ import Graphics.Gloss.Data.Vector
 
 type Circle = (Point, Vector)
 type Box = (Segment, Segment, Segment, Segment)
+-- box with Point + Vector
 type Segment = (Point, Vector)
 
 
@@ -22,7 +24,6 @@ data Shape = Window Box
 data IntersectionType = Corner
     | Horizontal
     | Vertical
-    | Null
     deriving (Eq, Show)
 
 data GameState = GameState Obj [Obj]
@@ -39,10 +40,10 @@ blockHeight = 20
 
 ballRadius :: Float
 ballRadius = 10
-blockDist = 1
+blockDist = 2
 
 blockColors :: [Color]
-blockColors = [yellow, green, orange, red]
+blockColors = [yellow, green, orange, red, cyan, white, blue]
 
 makeWindow :: Float -> Float -> Point -> Obj
 makeWindow x y (px, py) = (Window box, ((px, py), (0, 0)))
@@ -67,7 +68,6 @@ draw :: GameState -> Picture
 draw (GameState ball others)  =
     pictures (map drawObj (ball : others))
 
-
 drawObj :: Obj -> Picture
 drawObj (shape, ((x, y), _)) = translate x y $ drawShape shape
 
@@ -82,13 +82,10 @@ ball = circleSolid ballRadius
 block = polygon [(0, 0), (blockWeight, 0), (blockWeight, blockHeight), (0, blockHeight)]
 window = line [(0, 0), (maxX * 2, 0), (maxX * 2, maxY * 2), (0, maxY * 2), (0, 0)]
 
-
-
 initialBall :: IO Circle
 initialBall = do
     x <- randomRIO (- maxX, 0)
-    return ((x, -maxY + 10), (200, 200))
-
+    return ((x, -maxY + 10), (400, 400))
 
 update :: Float -> GameState -> GameState
 update dt gs = 
@@ -97,13 +94,10 @@ update dt gs =
 detectCollisions :: Float -> GameState -> GameState
 detectCollisions dt (GameState b others) = GameState b' others'
     where
-        intersected = map updateObj (filter (intersects dt b) others)
-        nonIntersected = filter (not . intersects dt b) others
+        intersected = map updateObj [obj | obj <- others, isJust (intersectType dt b obj)]
+        nonIntersected = [obj | obj <- others, isNothing (intersectType dt b obj)]
         others' = nonIntersected ++ filter isAlive intersected
         b' = updateBall dt b intersected
-
-intersects :: Float -> Obj -> Obj -> Bool
-intersects dt (Ball, coords) obj = intersectType dt coords obj /= Null
 
 isAlive :: Obj -> Bool
 isAlive (Window _, _) = True
@@ -128,28 +122,26 @@ updateBall :: Float -> Obj -> [Obj] -> Obj
 updateBall _ c [] = c
 updateBall dt (Ball, (p, (vx, vy))) (obj:xs) = updateBall dt newCoords xs
     where
-        intType = intersectType dt (p, (vx, vy)) obj
+        coords = (p, (vx, vy))
+        intType = intersectType dt (Ball, coords) obj
         newCoords
-            | intType == Horizontal = (Ball, (p, (-vx, vy)))
-            | intType == Vertical = (Ball, (p, (vx, -vy)))
+            | intType == Just Horizontal = (Ball, (p, (-vx, vy)))
+            | intType == Just Vertical = (Ball, (p, (vx, -vy)))
             | otherwise = (Ball, (p, (vx, vy)))
 
 --intersectCorner :: Float -> Ball -> Obj -> Bool
 --intersectCorner dt ((x, y), (vx, vy)) (Block )
 
-intersectType :: Float -> Circle -> Obj -> IntersectionType
-intersectType dt ball (Window (s1, s2, s3, s4), (pos, _))
-        | intersectsSegment dt ball s1 = Vertical
-        | intersectsSegment dt ball s2 = Horizontal
-        | intersectsSegment dt ball s3 = Vertical
-        | intersectsSegment dt ball s4 = Horizontal
-        | otherwise = Null
-intersectType dt ball (Block (s1, s2, s3, s4) l, (pos, _))
-        | intersectsSegment dt ball s1 = Vertical
-        | intersectsSegment dt ball s2 = Horizontal
-        | intersectsSegment dt ball s3 = Vertical
-        | intersectsSegment dt ball s4 = Horizontal
-        | otherwise = Null
+intersectType :: Float -> Obj -> Obj -> Maybe IntersectionType
+intersectType dt (Ball, coord) (Window (s1, s2, s3, s4), (pos, _))
+        | intersectsSegment dt coord s1 || intersectsSegment dt coord s3 = Just Vertical
+        | intersectsSegment dt coord s2 || intersectsSegment dt coord s4 = Just Horizontal
+        | otherwise = Nothing
+intersectType dt (Ball, coord) (Block (s1, s2, s3, s4) _, (pos, _))
+        | intersectsSegment dt coord s1 || intersectsSegment dt coord s3 = Just Vertical
+        | intersectsSegment dt coord s2 || intersectsSegment dt coord s4 = Just Horizontal
+        | otherwise = Nothing
+
 
 intersectsSegment :: Float -> Circle -> Segment -> Bool
 intersectsSegment dt ((x, y), (vx, vy)) ((a, b), (c, d)) =
