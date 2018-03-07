@@ -7,18 +7,15 @@ import Graphics.Gloss.Data.Vector
 
 
 type Circle = (Point, Vector)
-type Box = (Segment, Segment, Segment, Segment)
--- box with Point + Vector
+
 type Segment = (Point, Vector)
 
-
-type Obj = (Shape, Coords)
 type Coords = (Point, Vector)
 
-data Shape = Window Box
-    | Block Box Int
-    | Bar Box
-    | Ball
+data Obj = Window Point
+    | Block Point Int
+    | Bar Point
+    | Ball Coords
     deriving (Show)
 
 data IntersectionType = Corner
@@ -45,37 +42,25 @@ blockDist = 2
 blockColors :: [Color]
 blockColors = [yellow, green, orange, red, cyan, white, blue]
 
-makeWindow :: Float -> Float -> Point -> Obj
-makeWindow x y (px, py) = (Window box, ((px, py), (0, 0)))
-    where box = (((0 + px, 0 + py), (x, 0)), 
-            ((x + px, 0 + py), (0, y)), 
-            ((x + px, y + py), (-x, 0)), 
-            ((0 + px, y + py), (0, -y)))
+makeWindow :: Point -> Obj
+makeWindow = Window
 
-makeBlock :: Float -> Float -> Int -> Point -> Obj
-makeBlock x y lives (px, py) = (Block box lives, ((px, py), (0, 0)))
-    where box = (((0 + px, 0 + py), (x, 0)), 
-            ((x + px, 0 + py), (0, y)), 
-            ((x + px, y + py), (-x, 0)), 
-            ((0 + px, y + py), (0, -y)))
+makeBlock :: Point -> Int -> Obj
+makeBlock = Block
 
 makeLevel :: Int -> [Obj]
-makeLevel 1 = [makeBlock blockWeight blockHeight 1 (-300 + x * (blockWeight + blockDist), 0) | x <- [0..10]]
+makeLevel 1 = [makeBlock (-300 + x * (blockWeight + blockDist), 0) 1| x <- [0..10]]
 makeLevel n = 
-    [makeBlock blockWeight blockHeight n (-300 + x * (blockWeight + blockDist), fromIntegral (n - 1) * (blockHeight + blockDist)) | x <- [0..10]] ++ makeLevel (n - 1)
+    [makeBlock (-300 + x * (blockWeight + blockDist), fromIntegral (n - 1) * (blockHeight + blockDist)) n | x <- [0..10]] ++ makeLevel (n - 1)
 
 draw :: GameState -> Picture
 draw (GameState ball others)  =
     pictures (map drawObj (ball : others))
 
 drawObj :: Obj -> Picture
-drawObj (shape, ((x, y), _)) = translate x y $ drawShape shape
-
-drawShape :: Shape -> Picture
-drawShape Ball = color blue ball
-drawShape (Window _) = 
-    color red window
-drawShape (Block _ l) = color (blockColors !! (l - 1)) block
+drawObj (Window (x, y)) = translate x y $ color red window
+drawObj (Block (x, y) l) = translate x y $ color (blockColors !! (l - 1)) block
+drawObj (Ball ((x, y), _)) = translate x y $ color blue ball
 
 ball, block, window :: Picture
 ball = circleSolid ballRadius
@@ -100,48 +85,47 @@ detectCollisions dt (GameState b others) = GameState b' others'
         b' = updateBall dt b intersected
 
 isAlive :: Obj -> Bool
-isAlive (Window _, _) = True
-isAlive (Block _ 0, _) = False
-isAlive (Block _ _, _) = True
+isAlive (Block _ 0) = False
+isAlive obj = True
 
 updateObj :: Obj -> Obj
-updateObj (Block box lives, coordsBlock) =
-    (Block box (lives - 1), coordsBlock)
-updateObj o = o
+updateObj (Block p l) = Block p (l - 1)
+updateObj obj = obj
 
 move:: Float -> GameState -> GameState
 move dt (GameState b segList) = GameState (moveObj dt b) (map (moveObj dt) segList)
 
 moveObj :: Float -> Obj -> Obj
-moveObj dt (shape, coords) = (shape, moveCoords dt coords)
-
-moveCoords :: Float -> Coords -> Coords
-moveCoords dt ((x, y), (vx, vy)) = ((x + vx * dt, y + vy * dt), (vx, vy))
+moveObj dt (Ball ((x, y), (vx, vy))) = Ball ((x + vx * dt, y + vy * dt), (vx, vy))
+moveObj _ obj = obj
 
 updateBall :: Float -> Obj -> [Obj] -> Obj
 updateBall _ c [] = c
-updateBall dt (Ball, (p, (vx, vy))) (obj:xs) = updateBall dt newCoords xs
+updateBall dt (Ball (p, (vx, vy))) (obj:xs) = updateBall dt newCoords xs
     where
         coords = (p, (vx, vy))
-        intType = intersectType dt (Ball, coords) obj
+        intType = intersectType dt (Ball coords) obj
         newCoords
-            | intType == Just Horizontal = (Ball, (p, (-vx, vy)))
-            | intType == Just Vertical = (Ball, (p, (vx, -vy)))
-            | otherwise = (Ball, (p, (vx, vy)))
+            | intType == Just Horizontal = Ball (p, (-vx, vy))
+            | intType == Just Vertical = Ball (p, (vx, -vy))
+            | otherwise = Ball (p, (vx, vy))
 
 --intersectCorner :: Float -> Ball -> Obj -> Bool
 --intersectCorner dt ((x, y), (vx, vy)) (Block )
 
 intersectType :: Float -> Obj -> Obj -> Maybe IntersectionType
-intersectType dt (Ball, coord) (Window (s1, s2, s3, s4), (pos, _))
+intersectType dt (Ball coord) obj
         | intersectsSegment dt coord s1 || intersectsSegment dt coord s3 = Just Vertical
         | intersectsSegment dt coord s2 || intersectsSegment dt coord s4 = Just Horizontal
         | otherwise = Nothing
-intersectType dt (Ball, coord) (Block (s1, s2, s3, s4) _, (pos, _))
-        | intersectsSegment dt coord s1 || intersectsSegment dt coord s3 = Just Vertical
-        | intersectsSegment dt coord s2 || intersectsSegment dt coord s4 = Just Horizontal
-        | otherwise = Nothing
-
+        where
+            (s1, s2, s3, s4) = makeSegments' obj
+            makeSegments' (Window p) = makeSegments p (2 * maxX, 2 * maxY)
+            makeSegments' (Block p l) = makeSegments p (blockWeight, blockHeight)
+            makeSegments (px, py) (vx, vy) = (((px, py), (vx, 0)),
+                                                ((px + vx, py), (0, vy)),
+                                                ((px + vx, py + vy), (-vx, 0)),
+                                                ((px, py + vy), (0, -vy)))
 
 intersectsSegment :: Float -> Circle -> Segment -> Bool
 intersectsSegment dt ((x, y), (vx, vy)) ((a, b), (c, d)) =
@@ -171,9 +155,9 @@ sameSignal a b = a / abs a == b / abs b
 initialState :: IO GameState
 initialState = do
     ballCoords <- initialBall
-    return (GameState (Ball, ballCoords) (window:level))
+    return (GameState (Ball ballCoords) (window:level))
     where
-        window = makeWindow (fromIntegral 800) (fromIntegral 600) (-maxX, -maxY)
+        window = makeWindow (-maxX, -maxY)
         level = makeLevel 4
 
 gameWindow :: Display
