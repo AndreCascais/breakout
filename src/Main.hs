@@ -24,12 +24,10 @@ data Ball = Ball Coords          -- ball with position/velocity
 -- types of intersections between the ball and objects
 data IntersectionType = Horizontal
     | Vertical
-    deriving (Eq, Show)
+    deriving (Eq)
 
 -- gamestate is the Ball, the Bar and a list of non moving blocks (the window is included here)
 data GameState = GameState Ball Bar Window [Block] [Level]
--- data GameState = GameState Int Ball Bar Window [Block] []
--- change level list to be a part of gamestate, change objects to the specific types
 
 fps, height, weight :: Int
 fps = 60
@@ -58,22 +56,30 @@ makeWindow = Window
 makeBlock :: Point -> Int -> Block
 makeBlock = Block
 
+makeRandomBlock :: Point -> IO Block
+makeRandomBlock p = do
+    life <- randomLife
+    return (Block p life)
+
 makeBar :: Point -> Bar
 makeBar p = Bar (p, (0, 0))
 
 -- create "tradition" level with 10 blocks per row increasing block lives per column
-makeLevel :: Int -> [Block]
+makeLevel :: Int -> Level
 makeLevel 1 = [makeBlock (-300 + x * (blockWeight + blockDist), 0) 1| x <- [0..10]]
 makeLevel n = 
     [makeBlock (-300 + x * (blockWeight + blockDist), fromIntegral (n - 1) * (blockHeight + blockDist)) n | x <- [0..10]] ++ makeLevel (n - 1)
 
---makeRandomLevel :: Int -> IO [Obj]
---makeRandomLevel 1 = return [makeBlock (-300 + x * (blockWeight + blockDist), 0) randomLives | x <- [0..10]]
---makeRandomLevel n = 
---    return [makeBlock (-300 + x * (blockWeight + blockDist), fromIntegral (n - 1) * (blockHeight + blockDist)) randomLives | x <- [0..10]] ++ makeLevel (n - 1)
+-- create random levels with random blocks in all positions (even unbreakable ones)
+makeRandomLevel :: Int -> [IO Block]
+makeRandomLevel 1 =
+    [makeRandomBlock (-300 + x * (blockWeight + blockDist), 0) | x <- [0..10]]
+makeRandomLevel n =
+    [makeRandomBlock (-300 + x * (blockWeight + blockDist), fromIntegral (n - 1) * (blockHeight + blockDist)) | x <- [0..10]] ++ makeRandomLevel (n - 1)
 
-randomLives :: IO Int
-randomLives = do
+-- random block generation - 1/27 chance to be a unbreakable one
+randomLife :: IO Int
+randomLife = do
     a <- randomRIO(0, 26)
     if a == 0 then return 100 else return ((a `mod` 4) + 1)
 
@@ -110,33 +116,47 @@ update :: Float -> GameState -> GameState
 update dt gs = 
     move dt (detectCollisions dt gs)
 
+-- function to detect and update collisions
+-- a collision with the bottom segment of the window makes the level reset
+-- a collision with the last breakable block of the level makes it to swap to the next one
 detectCollisions :: Float -> GameState -> GameState
-detectCollisions dt (GameState b bar window others levels)
-    | isNothing b' = GameState (resetBall b) bar window (head levels) levels
-    | otherwise = GameState (fromJust b') bar window others' levels
+detectCollisions dt (GameState b bar window others (level:levels))
+    | isNothing b' = GameState (resetBall b) bar window level (level:levels)
+    | otherwise = if remaining == 0
+        then GameState (fromJust b') bar window level levels
+        else GameState (fromJust b') bar window others' (level:levels)
     where
         intersected = map updateBlock [obj | obj <- others, isJust (intersectTypeBlock dt b obj)]
         nonIntersected = [obj | obj <- others, isNothing (intersectTypeBlock dt b obj)]
         others' = nonIntersected ++ filter isAlive intersected
+        remaining = length (filter isDestructible others')
         b' = updateBall dt b bar window intersected
 
+-- checks if the block is still alive
 isAlive :: Block -> Bool
 isAlive (Block _ 0) = False
 isAlive _ = True
 
+-- updates block after a hit
 updateBlock :: Block -> Block
 updateBlock (Block p l)
     | l < 5 = Block p (l - 1)
     | otherwise = Block p l
 
---
+-- checks if a block is "brekable"
+isDestructible :: Block -> Bool
+isDestrutible (Block p 100) = False
+isDestructible _ = True
+
+-- moves the whole world according to the fraction of the time spent (dt)
 move:: Float -> GameState -> GameState
 move dt (GameState b bar window blocks levels) = GameState (moveBall dt b) (moveBar dt bar) window blocks levels
 
--- moves ball and bar after dt time
+-- moves ball after dt time
 moveBall :: Float -> Ball -> Ball
 moveBall dt (Ball ((x, y), (vx, vy))) = Ball ((x + vx * dt, y + vy * dt), (vx, vy))
 
+-- moves bar after dt time
 moveBar :: Float -> Bar -> Bar
 moveBar dt (Bar ((x, y), (vx, vy)))
     | x + vx * dt + barWeight >= maxX = Bar ((maxX - barWeight, y + vy * dt), (vx, vy))
@@ -151,6 +171,7 @@ updateBall dt ball bar window blocks
         where
             first = updateFromWindow  dt ball window
             second = updateFromBar dt (fromJust first) bar
+-- update from window (special case where ball can touch the bottom horiziontal wall)
 updateFromWindow :: Float -> Ball -> Window -> Maybe Ball
 updateFromWindow  dt (Ball (p, (vx, vy))) window
     | intType == Just Vertical && vy < 0 = Nothing
@@ -173,8 +194,10 @@ getUpdatedBall (Ball (p, (vx, vy))) (Just Vertical) = Ball (p, (vx, -vy))
 getUpdatedBall (Ball (p, (vx, vy))) (Just Horizontal) = Ball (p, (-vx, vy))
 getUpdatedBall ball Nothing = ball
 
+-- resets a ball after a failed attempt to defent with the bar (level is reset afterwards)
 resetBall :: Ball -> Ball
 resetBall (Ball (p, (vx, vy))) = Ball (p, (vx, -vy))
+
 -- gets intersection type between two objects (ball and another for now)
 intersectTypeBar :: Float -> Ball -> Bar -> Maybe IntersectionType
 intersectTypeBar dt (Ball coord) (Bar ((px, py), (vx, vy))) =
@@ -204,6 +227,7 @@ intersectsSegment dt ((x, y), (vx, vy)) ((a, b), (c, d)) =
         dx = vx * dt
         dy = vy * dt
 
+-- makes 4 segments(box) from a point and the diagonal vector
 makeSegments :: Coords -> Box
 makeSegments ((px, py), (vx, vy)) = (((px, py), (vx, 0)),
                                     ((px + vx, py), (0, vy)),
@@ -225,6 +249,7 @@ sameSignal 0 b = True
 sameSignal a 0 = True
 sameSignal a b = a / abs a == b / abs b
 
+-- event handler function (left and right to move bar and f1 to skip to next level)
 handle :: Event -> GameState -> GameState 
 handle (EventKey (SpecialKey KeyLeft) Down _ _) (GameState b (Bar (p, (vx, vy))) window blocks levels) = 
     GameState b (Bar (p, (-barSpeed, 0))) window blocks levels
@@ -234,15 +259,19 @@ handle (EventKey (SpecialKey KeyLeft) Up _ _) (GameState b (Bar (p, _)) window b
         GameState b (Bar (p, (0, 0))) window blocks levels
 handle (EventKey (SpecialKey KeyRight) Up _ _) (GameState b (Bar (p, _)) window blocks levels) = 
         GameState b (Bar (p, (0, 0))) window blocks levels
+handle (EventKey (SpecialKey KeyF1) Down _ _) (GameState b bar window blocks (level:levels)) =
+        GameState b bar window level levels
 handle ev gs = gs
 
+-- initial levels are a cycle between 4 default and 4 random levels
 initialState :: IO GameState
 initialState = do
     ballCoords <- initialBall
-    return (GameState (Ball ballCoords) bar window level [level])
+    randomLevel <- sequence [sequence (makeRandomLevel x) | x <- [1..4]]
+    return (GameState (Ball ballCoords) bar window (head levels) (cycle (levels ++ randomLevel)))
     where
         window = makeWindow (-maxX, -maxY)
-        level = makeLevel 4
+        levels = [makeLevel x | x <- [1..4]]
         bar = makeBar (-barWeight / 2, -maxY)
 
 gameWindow :: Display
